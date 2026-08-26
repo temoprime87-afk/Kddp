@@ -1,5 +1,1 @@
-openai
-python-dotenv
-requests
-beautifulsoup4
-playwright
+requests>=2.31.0
