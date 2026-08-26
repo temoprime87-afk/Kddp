@@ -1,5 +1,4 @@
-
-from research_agent import ResearchAgent
+from agents.research_agent import ResearchAgent
 
 
 class Orchestrator:
