@@ -2,6 +2,9 @@ name: KDP Agent
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
 
 permissions:
   contents: read
@@ -24,9 +27,13 @@ jobs:
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then
             pip install -r requirements.txt
+          else
+            pip install tavily-python
           fi
 
       - name: Run KDP Research Agent
+        env:
+          TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
         run: |
           python main.py
 
