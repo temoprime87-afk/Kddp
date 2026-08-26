@@ -3,6 +3,9 @@ name: KDP Agent
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   run-agent:
     runs-on: ubuntu-latest
@@ -23,6 +26,14 @@ jobs:
             pip install -r requirements.txt
           fi
 
-      - name: Run KDP Agent
+      - name: Run KDP Research Agent
         run: |
           python main.py
+
+      - name: Upload research report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kdp-research-report
+          path: kdp_research_report.json
+          if-no-files-found: warn
