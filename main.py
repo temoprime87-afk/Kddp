@@ -1,390 +1,334 @@
 import json
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timezone
+
+import requests
+
+
+TAVILY_URL = "https://api.tavily.com/search"
 
 
 # ============================================================
-# KDP AUTONOMOUS RESEARCH ENGINE
-# Version 1.0
+# KDP WEB RESEARCH ENGINE
 # ============================================================
 
 
-def clean_text(text):
-    """Clean and normalize text."""
-    if not text:
+def clean_text(value):
+    if value is None:
         return ""
 
-    text = str(text)
-    text = re.sub(r"\s+", " ", text)
-    return text.strip()
+    value = str(value)
+    value = re.sub(r"\s+", " ", value)
+
+    return value.strip()
 
 
-def score_demand(demand):
-    """Convert demand level to a numerical score."""
-    values = {
-        "very_high": 95,
-        "high": 80,
-        "medium": 60,
-        "low": 35,
-        "very_low": 15,
-    }
+def get_api_key():
+    key = os.getenv("TAVILY_API_KEY", "").strip()
 
-    return values.get(str(demand).lower(), 50)
+    if not key:
+        raise RuntimeError(
+            "Missing TAVILY_API_KEY. "
+            "Add it to GitHub Actions secrets."
+        )
 
-
-def score_competition(competition):
-    """Lower competition is better."""
-    values = {
-        "very_low": 95,
-        "low": 80,
-        "medium": 60,
-        "high": 35,
-        "very_high": 15,
-    }
-
-    return values.get(str(competition).lower(), 50)
+    return key
 
 
-def score_profitability(profitability):
-    """Convert profitability level to score."""
-    values = {
-        "very_high": 95,
-        "high": 80,
-        "medium": 60,
-        "low": 35,
-        "very_low": 15,
-    }
-
-    return values.get(str(profitability).lower(), 50)
-
-
-def calculate_opportunity_score(
-    demand,
-    competition,
-    profitability,
-    differentiation,
-):
+def search_web(query, api_key, max_results=5):
     """
-    Main opportunity score.
-
-    Demand:
-        30%
-
-    Competition:
-        30%
-
-    Profitability:
-        20%
-
-    Differentiation:
-        20%
+    Search the web using Tavily.
     """
 
-    final_score = (
-        demand * 0.30
-        + competition * 0.30
-        + profitability * 0.20
-        + differentiation * 0.20
+    payload = {
+        "api_key": api_key,
+        "query": query,
+        "search_depth": "advanced",
+        "max_results": max_results,
+        "include_answer": True,
+        "include_raw_content": False,
+    }
+
+    response = requests.post(
+        TAVILY_URL,
+        json=payload,
+        timeout=60,
     )
 
-    return round(final_score, 2)
+    response.raise_for_status()
+
+    return response.json()
 
 
-def create_niche(
-    name,
-    audience,
-    demand,
-    competition,
-    profitability,
-    differentiation,
-    problems,
-    book_angles,
-):
-    """Create a structured niche object."""
+def extract_results(search_response):
+    results = []
 
-    demand_score = score_demand(demand)
-    competition_score = score_competition(competition)
-    profitability_score = score_profitability(profitability)
+    for item in search_response.get("results", []):
+        results.append(
+            {
+                "title": clean_text(item.get("title")),
+                "url": clean_text(item.get("url")),
+                "content": clean_text(item.get("content")),
+                "score": item.get("score"),
+            }
+        )
 
-    opportunity_score = calculate_opportunity_score(
-        demand_score,
-        competition_score,
-        profitability_score,
-        differentiation,
-    )
-
-    return {
-        "niche": clean_text(name),
-        "target_audience": clean_text(audience),
-        "demand": demand,
-        "demand_score": demand_score,
-        "competition": competition,
-        "competition_score": competition_score,
-        "profitability": profitability,
-        "profitability_score": profitability_score,
-        "differentiation_score": differentiation,
-        "opportunity_score": opportunity_score,
-        "problems": problems,
-        "book_angles": book_angles,
-    }
+    return results
 
 
-def generate_initial_market_map():
+def research_niche(niche, api_key):
     """
-    Initial research map.
-
-    This is NOT the final research.
-    It gives the agent a structured starting point.
+    Perform multiple searches around one niche.
     """
 
-    niches = [
-
-        create_niche(
-            name="Practical Journaling",
-            audience="Adults interested in productivity and self-reflection",
-            demand="high",
-            competition="high",
-            profitability="medium",
-            differentiation=72,
-            problems=[
-                "Difficulty maintaining a journaling habit",
-                "Lack of structured prompts",
-                "Overcomplicated journaling systems",
-            ],
-            book_angles=[
-                "30-day guided journal",
-                "Minimalist daily journal",
-                "Problem-solving journal",
-            ],
-        ),
-
-        create_niche(
-            name="Meal Planning for Busy People",
-            audience="Busy adults and families",
-            demand="high",
-            competition="high",
-            profitability="high",
-            differentiation=75,
-            problems=[
-                "Lack of time",
-                "Difficulty deciding what to cook",
-                "Food waste",
-                "Poor weekly organization",
-            ],
-            book_angles=[
-                "30-day meal planner",
-                "Simple weekly meal system",
-                "Budget meal planning workbook",
-            ],
-        ),
-
-        create_niche(
-            name="Home Organization",
-            audience="People trying to simplify and organize their homes",
-            demand="high",
-            competition="high",
-            profitability="medium",
-            differentiation=78,
-            problems=[
-                "Clutter",
-                "Lack of organization systems",
-                "Difficulty maintaining routines",
-            ],
-            book_angles=[
-                "30-day decluttering challenge",
-                "Room-by-room organization workbook",
-                "Minimalist home planner",
-            ],
-        ),
-
-        create_niche(
-            name="Beginner Hobby Workbooks",
-            audience="Adults starting new hobbies",
-            demand="medium",
-            competition="medium",
-            profitability="medium",
-            differentiation=85,
-            problems=[
-                "Beginners don't know where to start",
-                "Lack of structured practice",
-                "Difficulty tracking progress",
-            ],
-            book_angles=[
-                "30-day beginner challenge",
-                "Progress tracker workbook",
-                "Practice journal",
-            ],
-        ),
-
-        create_niche(
-            name="Specialized Puzzle Books",
-            audience="Adults who enjoy puzzles and brain games",
-            demand="high",
-            competition="high",
-            profitability="high",
-            differentiation=82,
-            problems=[
-                "Generic puzzle books are repetitive",
-                "Readers want specialized themes",
-                "Need for varied difficulty",
-            ],
-            book_angles=[
-                "Themed puzzle collection",
-                "Progressive difficulty puzzle book",
-                "Large-print puzzle workbook",
-            ],
-        ),
-
+    queries = [
+        f"{niche} market demand trends",
+        f"{niche} problems customers want solved",
+        f"{niche} books Amazon Kindle paperback bestseller",
+        f"{niche} competitors books reviews",
+        f"{niche} underserved audience opportunities",
     ]
 
-    return niches
-
-
-def rank_niches(niches):
-    """Rank niches from strongest to weakest opportunity."""
-
-    return sorted(
-        niches,
-        key=lambda item: item["opportunity_score"],
-        reverse=True,
-    )
-
-
-def generate_research_report(niches):
-    """Generate the final research report."""
-
-    ranked = rank_niches(niches)
-
-    report = {
-        "generated_at": datetime.utcnow().isoformat() + "Z",
-        "total_niches_analyzed": len(ranked),
-        "ranked_niches": ranked,
-        "top_opportunity": ranked[0] if ranked else None,
+    research = {
+        "niche": niche,
+        "queries": [],
+        "sources": [],
     }
 
-    return report
+    for query in queries:
+
+        print("")
+        print(f"SEARCH: {query}")
+
+        try:
+            response = search_web(
+                query,
+                api_key,
+                max_results=5,
+            )
+
+            results = extract_results(response)
+
+            research["queries"].append(
+                {
+                    "query": query,
+                    "answer": clean_text(
+                        response.get("answer", "")
+                    ),
+                    "results": results,
+                }
+            )
+
+            for result in results:
+                research["sources"].append(result)
+
+            print(
+                f"Found {len(results)} sources."
+            )
+
+        except Exception as error:
+
+            print(
+                f"Search failed: {error}"
+            )
+
+            research["queries"].append(
+                {
+                    "query": query,
+                    "error": str(error),
+                    "results": [],
+                }
+            )
+
+    return research
 
 
-def save_report(report):
-    """Save research results as JSON."""
+def calculate_basic_score(research):
+    """
+    Preliminary score based on research coverage.
 
-    output_file = "kdp_research_report.json"
+    This is NOT a sales guarantee.
+    """
 
+    source_count = len(
+        research.get("sources", [])
+    )
+
+    unique_domains = set()
+
+    for source in research.get("sources", []):
+
+        url = source.get("url", "")
+
+        match = re.search(
+            r"https?://([^/]+)",
+            url,
+        )
+
+        if match:
+            unique_domains.add(
+                match.group(1).lower()
+            )
+
+    source_score = min(
+        source_count * 5,
+        50,
+    )
+
+    diversity_score = min(
+        len(unique_domains) * 5,
+        30,
+    )
+
+    coverage_score = min(
+        len(research.get("queries", [])) * 4,
+        20,
+    )
+
+    score = (
+        source_score
+        + diversity_score
+        + coverage_score
+    )
+
+    return min(round(score, 2), 100)
+
+
+def save_json(filename, data):
     with open(
-        output_file,
+        filename,
         "w",
         encoding="utf-8",
     ) as file:
 
         json.dump(
-            report,
+            data,
             file,
             indent=2,
             ensure_ascii=False,
         )
 
-    return output_file
-
-
-def print_final_result(report):
-    """Display the final result in GitHub Actions logs."""
-
-    print("")
-    print("=" * 65)
-    print("KDP AUTONOMOUS RESEARCH ENGINE")
-    print("=" * 65)
-    print("")
-
-    print(
-        f"Niches analyzed: "
-        f"{report['total_niches_analyzed']}"
-    )
-
-    print("")
-
-    print("TOP OPPORTUNITY")
-    print("-" * 65)
-
-    top = report["top_opportunity"]
-
-    if not top:
-        print("No opportunity found.")
-        return
-
-    print(
-        f"Niche: {top['niche']}"
-    )
-
-    print(
-        f"Target audience: "
-        f"{top['target_audience']}"
-    )
-
-    print(
-        f"Demand score: "
-        f"{top['demand_score']}/100"
-    )
-
-    print(
-        f"Competition score: "
-        f"{top['competition_score']}/100"
-    )
-
-    print(
-        f"Profitability score: "
-        f"{top['profitability_score']}/100"
-    )
-
-    print(
-        f"Differentiation score: "
-        f"{top['differentiation_score']}/100"
-    )
-
-    print(
-        f"OPPORTUNITY SCORE: "
-        f"{top['opportunity_score']}/100"
-    )
-
-    print("")
-
-    print("Potential book angles:")
-
-    for angle in top["book_angles"]:
-        print(f"  - {angle}")
-
-    print("")
-    print("=" * 65)
-    print("Research report saved to kdp_research_report.json")
-    print("=" * 65)
-    print("")
-
 
 def main():
-    print("")
-    print("=" * 65)
-    print("KDP AUTONOMOUS AGENT")
-    print("=" * 65)
-    print("")
 
-    print("Starting research engine...")
+    print("")
+    print("=" * 70)
+    print("KDP AUTONOMOUS WEB RESEARCH ENGINE")
+    print("=" * 70)
     print("")
 
-    niches = generate_initial_market_map()
+    api_key = get_api_key()
 
-    print(
-        f"Analyzing {len(niches)} initial opportunities..."
+    # Initial research targets.
+    # Later the agent will discover these automatically.
+    niches = [
+        "meal planning for busy families",
+        "home organization workbook",
+        "beginner hobby workbook",
+        "specialized puzzle books",
+        "guided self improvement journal",
+    ]
+
+    all_research = []
+
+    for number, niche in enumerate(
+        niches,
+        start=1,
+    ):
+
+        print("")
+        print("=" * 70)
+        print(
+            f"NICHE {number}/{len(niches)}: {niche}"
+        )
+        print("=" * 70)
+
+        research = research_niche(
+            niche,
+            api_key,
+        )
+
+        score = calculate_basic_score(
+            research
+        )
+
+        research["preliminary_research_score"] = score
+
+        all_research.append(research)
+
+        print("")
+        print(
+            f"Preliminary research score: "
+            f"{score}/100"
+        )
+
+    all_research.sort(
+        key=lambda item: item.get(
+            "preliminary_research_score",
+            0,
+        ),
+        reverse=True,
     )
 
-    report = generate_research_report(niches)
+    report = {
+        "generated_at": datetime.now(
+            timezone.utc
+        ).isoformat(),
 
-    output_file = save_report(report)
+        "engine": (
+            "KDP Autonomous Web Research Engine"
+        ),
 
-    print_final_result(report)
+        "important_note": (
+            "Research scores are analytical signals, "
+            "not guarantees of sales."
+        ),
 
-    print(
-        f"Saved: {output_file}"
+        "niches_analyzed": len(
+            all_research
+        ),
+
+        "ranking": all_research,
+    }
+
+    save_json(
+        "kdp_web_research.json",
+        report,
     )
+
+    print("")
+    print("=" * 70)
+    print("FINAL RESEARCH RESULT")
+    print("=" * 70)
+
+    if all_research:
+
+        winner = all_research[0]
+
+        print("")
+        print(
+            f"TOP RESEARCH OPPORTUNITY: "
+            f"{winner['niche']}"
+        )
+
+        print(
+            f"SCORE: "
+            f"{winner['preliminary_research_score']}/100"
+        )
+
+        print(
+            f"SOURCES: "
+            f"{len(winner.get('sources', []))}"
+        )
+
+    print("")
+    print(
+        "Saved: kdp_web_research.json"
+    )
+
+    print("")
+    print("=" * 70)
 
 
 if __name__ == "__main__":
