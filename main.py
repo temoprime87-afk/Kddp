@@ -21,9 +21,11 @@ SEARCHES_PER_NICHE = 10
 
 BOOK_LANGUAGE = "English"
 
-# Gemini model
-# You can change this from GitHub Actions Variables later.
-MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+# Current Gemini model
+MODEL = os.getenv(
+    "GEMINI_MODEL",
+    "gemini-3.6-flash"
+)
 
 
 # ============================================================
@@ -31,6 +33,7 @@ MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 # ============================================================
 
 def get_required_env(name):
+
     value = os.getenv(name)
 
     if not value:
@@ -44,8 +47,13 @@ def get_required_env(name):
 
 def get_clients():
 
-    tavily_key = get_required_env("TAVILY_API_KEY")
-    gemini_key = get_required_env("GEMINI_API_KEY")
+    tavily_key = get_required_env(
+        "TAVILY_API_KEY"
+    )
+
+    gemini_key = get_required_env(
+        "GEMINI_API_KEY"
+    )
 
     tavily = TavilyClient(
         api_key=tavily_key
@@ -186,9 +194,11 @@ def web_search(
 def discover_niches(client):
 
     print("\n" + "=" * 70)
+
     print(
         "PHASE 1 - NICHE DISCOVERY"
     )
+
     print("=" * 70)
 
     queries = [
@@ -215,8 +225,6 @@ def discover_niches(client):
             )
         )
 
-    # These are starting candidates.
-    # Gemini will analyze them using actual research.
     candidates = [
 
         "meal planning for busy families",
@@ -298,8 +306,7 @@ def gemini_text(
     client,
     system_prompt,
     user_prompt,
-    max_output_tokens=6000,
-    temperature=0.4
+    max_output_tokens=6000
 ):
 
     prompt = f"""
@@ -333,7 +340,6 @@ USER TASK:
                 contents=prompt,
 
                 config={
-                    "temperature": temperature,
                     "max_output_tokens": max_output_tokens
                 }
             )
@@ -350,18 +356,43 @@ USER TASK:
 
         except Exception as e:
 
+            error_text = str(e)
+
             print(
-                f"Gemini error: {e}"
+                f"Gemini error: {error_text}"
             )
+
+            # ------------------------------------------------
+            # Do NOT retry model-not-found errors.
+            # Retrying a 404 five times only wastes time.
+            # ------------------------------------------------
+
+            if (
+                "404" in error_text
+                or "NOT_FOUND" in error_text
+                or "not found" in error_text.lower()
+                or "no longer available" in error_text.lower()
+            ):
+
+                print(
+                    "\nGemini model error detected."
+                )
+
+                print(
+                    f"Current model: {MODEL}"
+                )
+
+                print(
+                    "Check GEMINI_MODEL in GitHub Actions."
+                )
+
+                raise
 
             if attempt == max_attempts:
 
                 raise
 
-            # Wait longer after each failure.
-            wait_seconds = (
-                5 * attempt
-            )
+            wait_seconds = 5 * attempt
 
             print(
                 f"Waiting {wait_seconds}s..."
@@ -390,13 +421,12 @@ def ask_json(
 
         user_prompt,
 
-        max_output_tokens=7000,
-
-        temperature=0.2
+        max_output_tokens=7000
     )
 
-    # Remove markdown fences if Gemini
-    # accidentally adds them.
+    # --------------------------------------------------------
+    # Remove markdown code fences
+    # --------------------------------------------------------
 
     text = re.sub(
         r"^```json\s*",
@@ -420,6 +450,10 @@ def ask_json(
 
     text = text.strip()
 
+    # --------------------------------------------------------
+    # Try direct JSON
+    # --------------------------------------------------------
+
     try:
 
         return json.loads(
@@ -428,30 +462,44 @@ def ask_json(
 
     except json.JSONDecodeError:
 
-        # Try to locate JSON object.
-        start = text.find("{")
-        end = text.rfind("}")
+        pass
 
-        if start != -1 and end != -1:
+    # --------------------------------------------------------
+    # Try extracting JSON object
+    # --------------------------------------------------------
 
-            candidate = text[
-                start:end + 1
-            ]
+    start = text.find(
+        "{"
+    )
 
-            try:
+    end = text.rfind(
+        "}"
+    )
 
-                return json.loads(
-                    candidate
-                )
+    if (
+        start != -1
+        and end != -1
+        and end > start
+    ):
 
-            except Exception:
+        candidate = text[
+            start:end + 1
+        ]
 
-                pass
+        try:
 
-        raise RuntimeError(
-            "Gemini returned invalid JSON:\n"
-            + text[:5000]
-        )
+            return json.loads(
+                candidate
+            )
+
+        except json.JSONDecodeError:
+
+            pass
+
+    raise RuntimeError(
+        "Gemini returned invalid JSON:\n"
+        + text[:5000]
+    )
 
 
 # ============================================================
@@ -477,7 +525,6 @@ def analyze_niche(
         ensure_ascii=False
     )
 
-    # Keep prompt reasonably sized.
     research_text = research_text[
         :50000
     ]
@@ -525,37 +572,23 @@ RESEARCH:
 {research_text}
 
 
-Return exactly this type of JSON:
+Return exactly this JSON structure:
 
 {{
   "niche": "...",
-
   "demand_score": 0,
-
   "competition_score": 0,
-
   "problem_score": 0,
-
   "differentiation_score": 0,
-
   "keyword_score": 0,
-
   "overall_score": 0,
-
   "decision": "GO",
-
   "target_reader": "...",
-
   "main_problems": [],
-
   "customer_needs": [],
-
   "competitor_weaknesses": [],
-
   "differentiation_strategy": [],
-
   "book_opportunities": [],
-
   "risks": []
 }}
 """
@@ -583,6 +616,12 @@ def select_best_niche(
     )
 
     print("=" * 70)
+
+    if not analyses:
+
+        raise RuntimeError(
+            "No niche analyses were generated."
+        )
 
     best = max(
 
@@ -776,9 +815,7 @@ Do not include meta commentary.
 
         user,
 
-        max_output_tokens=10000,
-
-        temperature=0.6
+        max_output_tokens=10000
     )
 
 
@@ -838,21 +875,13 @@ Evaluate:
 
 {{
   "overall_quality": 0,
-
   "originality": 0,
-
   "usefulness": 0,
-
   "structure": 0,
-
   "clarity": 0,
-
   "filler_risk": 0,
-
   "issues": [],
-
   "recommended_fixes": [],
-
   "ready_for_human_review": true
 }}
 """
@@ -875,19 +904,29 @@ def build_manuscript(
 
     lines = []
 
-    title = book_plan[
-        "title_options"
-    ][0]
+    title_options = book_plan.get(
+        "title_options",
+        []
+    )
+
+    if title_options:
+
+        title = title_options[0]
+
+    else:
+
+        title = "Untitled Book"
 
     subtitle = ""
 
-    if book_plan.get(
-        "subtitle_options"
-    ):
+    subtitle_options = book_plan.get(
+        "subtitle_options",
+        []
+    )
 
-        subtitle = book_plan[
-            "subtitle_options"
-        ][0]
+    if subtitle_options:
+
+        subtitle = subtitle_options[0]
 
     lines.append(
         f"# {title}"
@@ -905,7 +944,7 @@ def build_manuscript(
 
     lines.append(
         f"**Book concept:** "
-        f"{book_plan['book_concept']}"
+        f"{book_plan.get('book_concept', '')}"
     )
 
     lines.append("")
@@ -957,6 +996,10 @@ def main():
 
     print(
         "Gemini + Tavily"
+    )
+
+    print(
+        f"Model: {MODEL}"
     )
 
     print("=" * 70)
@@ -1023,7 +1066,6 @@ def main():
             analysis
         )
 
-        # Small pause between Gemini calls.
         time.sleep(2)
 
     save_json(
@@ -1065,9 +1107,18 @@ def main():
 
     chapters = []
 
-    for chapter in book_plan[
-        "table_of_contents"
-    ]:
+    table_of_contents = book_plan.get(
+        "table_of_contents",
+        []
+    )
+
+    if not table_of_contents:
+
+        raise RuntimeError(
+            "Gemini did not create a table of contents."
+        )
+
+    for chapter in table_of_contents:
 
         content = write_chapter(
 
@@ -1086,7 +1137,6 @@ def main():
             }
         )
 
-        # Small pause between chapters.
         time.sleep(2)
 
     # --------------------------------------------------------
@@ -1183,7 +1233,7 @@ def main():
 
     print(
         f"\nSelected niche: "
-        f"{winner['niche']}"
+        f"{winner.get('niche', 'Unknown')}"
     )
 
     print(
