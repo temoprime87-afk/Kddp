@@ -1,10 +1,10 @@
 import os
 import json
-import re
 from pathlib import Path
 
 from tavily import TavilyClient
-from openai import OpenAI
+from google import genai
+from google.genai import types
 
 
 # ============================================================
@@ -20,7 +20,11 @@ DEEP_SEARCHES = 10
 
 BOOK_LANGUAGE = "English"
 
-MODEL = os.getenv("OPENAI_MODEL", "gpt-5.6-luna")
+# Gemini model
+MODEL = os.getenv(
+    "GEMINI_MODEL",
+    "gemini-2.5-flash-lite"
+)
 
 
 # ============================================================
@@ -40,13 +44,24 @@ def get_required_env(name):
 
 
 def get_clients():
-    tavily_key = get_required_env("TAVILY_API_KEY")
-    openai_key = get_required_env("OPENAI_API_KEY")
 
-    tavily = TavilyClient(api_key=tavily_key)
-    openai = OpenAI(api_key=openai_key)
+    tavily_key = get_required_env(
+        "TAVILY_API_KEY"
+    )
 
-    return tavily, openai
+    gemini_key = get_required_env(
+        "GEMINI_API_KEY"
+    )
+
+    tavily = TavilyClient(
+        api_key=tavily_key
+    )
+
+    gemini = genai.Client(
+        api_key=gemini_key
+    )
+
+    return tavily, gemini
 
 
 # ============================================================
@@ -54,11 +69,19 @@ def get_clients():
 # ============================================================
 
 def save_json(filename, data):
-    OUTPUT_DIR.mkdir(exist_ok=True)
+
+    OUTPUT_DIR.mkdir(
+        exist_ok=True
+    )
 
     path = OUTPUT_DIR / filename
 
-    with open(path, "w", encoding="utf-8") as f:
+    with open(
+        path,
+        "w",
+        encoding="utf-8"
+    ) as f:
+
         json.dump(
             data,
             f,
@@ -66,28 +89,48 @@ def save_json(filename, data):
             ensure_ascii=False
         )
 
-    print(f"Saved: {path}")
+    print(
+        f"Saved: {path}"
+    )
 
 
 def save_text(filename, text):
-    OUTPUT_DIR.mkdir(exist_ok=True)
+
+    OUTPUT_DIR.mkdir(
+        exist_ok=True
+    )
 
     path = OUTPUT_DIR / filename
 
-    with open(path, "w", encoding="utf-8") as f:
+    with open(
+        path,
+        "w",
+        encoding="utf-8"
+    ) as f:
+
         f.write(text)
 
-    print(f"Saved: {path}")
+    print(
+        f"Saved: {path}"
+    )
 
 
 # ============================================================
 # TAVILY SEARCH
 # ============================================================
 
-def web_search(client, query, max_results=5):
-    print(f"\nSEARCH: {query}")
+def web_search(
+    client,
+    query,
+    max_results=5
+):
+
+    print(
+        f"\nSEARCH: {query}"
+    )
 
     try:
+
         response = client.search(
             query=query,
             search_depth="advanced",
@@ -95,25 +138,46 @@ def web_search(client, query, max_results=5):
             include_answer=True
         )
 
-        results = response.get("results", [])
+        results = response.get(
+            "results",
+            []
+        )
 
-        print(f"Found {len(results)} sources.")
+        print(
+            f"Found {len(results)} sources."
+        )
 
         return {
             "query": query,
-            "answer": response.get("answer"),
+            "answer": response.get(
+                "answer"
+            ),
             "sources": [
+
                 {
-                    "title": r.get("title"),
-                    "url": r.get("url"),
-                    "content": r.get("content", "")[:5000]
+                    "title": r.get(
+                        "title"
+                    ),
+
+                    "url": r.get(
+                        "url"
+                    ),
+
+                    "content": r.get(
+                        "content",
+                        ""
+                    )[:5000]
                 }
+
                 for r in results
             ]
         }
 
     except Exception as e:
-        print(f"Search failed: {e}")
+
+        print(
+            f"Search failed: {e}"
+        )
 
         return {
             "query": query,
@@ -128,36 +192,64 @@ def web_search(client, query, max_results=5):
 # ============================================================
 
 def discover_niches(client):
-    print("\n" + "=" * 70)
-    print("PHASE 1 - NICHE DISCOVERY")
-    print("=" * 70)
+
+    print(
+        "\n" + "=" * 70
+    )
+
+    print(
+        "PHASE 1 - NICHE DISCOVERY"
+    )
+
+    print(
+        "=" * 70
+    )
 
     queries = [
+
         "profitable low competition KDP book niches 2026",
+
         "Amazon Kindle underserved book niches 2026",
+
         "Amazon paperback niche opportunities 2026",
+
         "low competition workbook niches 2026",
+
         "problems people want solved with books"
+
     ]
 
     research = []
 
     for query in queries:
+
         research.append(
-            web_search(client, query)
+            web_search(
+                client,
+                query
+            )
         )
 
     candidates = [
+
         "meal planning for busy families",
+
         "home organization workbook",
+
         "beginner hobby workbook",
+
         "specialized puzzle books",
+
         "guided self improvement journal"
+
     ]
 
     return {
+
         "queries": research,
+
         "candidate_niches": candidates
+
     }
 
 
@@ -165,72 +257,159 @@ def discover_niches(client):
 # NICHE RESEARCH
 # ============================================================
 
-def research_niche(client, niche):
-    print("\n" + "=" * 70)
-    print(f"PHASE 2 - RESEARCH: {niche}")
-    print("=" * 70)
+def research_niche(
+    client,
+    niche
+):
+
+    print(
+        "\n" + "=" * 70
+    )
+
+    print(
+        f"PHASE 2 - RESEARCH: {niche}"
+    )
+
+    print(
+        "=" * 70
+    )
 
     queries = [
+
         f"{niche} market demand 2026",
+
         f"{niche} Amazon Kindle best sellers",
+
         f"{niche} Amazon paperback best sellers",
+
         f"{niche} customer problems",
+
         f"{niche} customer complaints",
+
         f"{niche} customer needs",
+
         f"{niche} competing books",
+
         f"{niche} competing books reviews",
+
         f"{niche} underserved audience",
-        f"{niche} Amazon keywords",
+
+        f"{niche} Amazon keywords"
+
     ]
 
     results = []
 
     for query in queries:
+
         results.append(
-            web_search(client, query)
+            web_search(
+                client,
+                query
+            )
         )
 
     return results
 
 
 # ============================================================
-# OPENAI JSON CALL
+# GEMINI JSON CALL
 # ============================================================
 
-def ask_json(client, system_prompt, user_prompt):
-    response = client.responses.create(
+def ask_json(
+    client,
+    system_prompt,
+    user_prompt
+):
+
+    prompt = f"""
+SYSTEM INSTRUCTIONS:
+
+{system_prompt}
+
+USER REQUEST:
+
+{user_prompt}
+
+IMPORTANT:
+
+Return ONLY valid JSON.
+
+Do not use markdown.
+Do not use ```json.
+Do not add explanations before or after the JSON.
+"""
+
+    response = client.models.generate_content(
+
         model=MODEL,
-        instructions=system_prompt,
-        input=user_prompt
+
+        contents=prompt,
+
+        config=types.GenerateContentConfig(
+
+            response_mime_type="application/json"
+
+        )
     )
 
-    text = response.output_text.strip()
-
-    # Remove accidental markdown fences.
-    text = re.sub(
-        r"^```json\s*",
-        "",
-        text,
-        flags=re.IGNORECASE
-    )
-
-    text = re.sub(
-        r"\s*```$",
-        "",
-        text
-    )
+    text = response.text.strip()
 
     return json.loads(text)
+
+
+# ============================================================
+# GEMINI TEXT CALL
+# ============================================================
+
+def ask_text(
+    client,
+    system_prompt,
+    user_prompt
+):
+
+    prompt = f"""
+SYSTEM INSTRUCTIONS:
+
+{system_prompt}
+
+USER REQUEST:
+
+{user_prompt}
+"""
+
+    response = client.models.generate_content(
+
+        model=MODEL,
+
+        contents=prompt
+
+    )
+
+    return response.text.strip()
 
 
 # ============================================================
 # NICHE ANALYSIS
 # ============================================================
 
-def analyze_niche(client, niche, research):
-    print("\n" + "=" * 70)
-    print(f"PHASE 3 - AI ANALYSIS: {niche}")
-    print("=" * 70)
+def analyze_niche(
+    client,
+    niche,
+    research
+):
+
+    print(
+        "\n" + "=" * 70
+    )
+
+    print(
+        f"PHASE 3 - AI ANALYSIS: {niche}"
+    )
+
+    print(
+        "=" * 70
+    )
 
     research_text = json.dumps(
         research,
@@ -238,15 +417,17 @@ def analyze_niche(client, niche, research):
     )[:50000]
 
     system = """
+
 You are an expert KDP market research analyst.
 
-Analyze evidence carefully.
+Analyze the supplied research carefully.
 
 Never claim guaranteed sales.
 
 Return ONLY valid JSON.
 
-The opportunity should be evaluated using:
+Evaluate the opportunity using:
+
 - customer demand signals
 - competition
 - review complaints
@@ -257,9 +438,11 @@ The opportunity should be evaluated using:
 - risk
 
 Use scores from 0 to 100.
+
 """
 
     user = f"""
+
 Niche:
 
 {niche}
@@ -287,6 +470,7 @@ Return this JSON structure:
   "book_opportunities": [],
   "risks": []
 }}
+
 """
 
     return ask_json(
@@ -300,10 +484,22 @@ Return this JSON structure:
 # SELECT BEST NICHE
 # ============================================================
 
-def select_best_niche(client, analyses):
-    print("\n" + "=" * 70)
-    print("PHASE 4 - SELECTING BEST NICHE")
-    print("=" * 70)
+def select_best_niche(
+    client,
+    analyses
+):
+
+    print(
+        "\n" + "=" * 70
+    )
+
+    print(
+        "PHASE 4 - SELECTING BEST NICHE"
+    )
+
+    print(
+        "=" * 70
+    )
 
     best = max(
         analyses,
@@ -330,10 +526,22 @@ def select_best_niche(client, analyses):
 # BOOK PLAN
 # ============================================================
 
-def create_book_plan(client, niche_analysis):
-    print("\n" + "=" * 70)
-    print("PHASE 5 - BOOK PLAN")
-    print("=" * 70)
+def create_book_plan(
+    client,
+    niche_analysis
+):
+
+    print(
+        "\n" + "=" * 70
+    )
+
+    print(
+        "PHASE 5 - BOOK PLAN"
+    )
+
+    print(
+        "=" * 70
+    )
 
     analysis_text = json.dumps(
         niche_analysis,
@@ -341,18 +549,23 @@ def create_book_plan(client, niche_analysis):
     )
 
     system = """
+
 You are a professional nonfiction book architect.
 
 Create a commercially sensible but honest KDP book plan.
 
 Do not copy existing books.
+
 Do not imitate a living author's style.
+
 Create original concepts.
 
 Return ONLY valid JSON.
+
 """
 
     user = f"""
+
 Create a complete book plan from this research:
 
 {analysis_text}
@@ -380,6 +593,7 @@ Return:
 }}
 
 Create 8 to 12 chapters.
+
 """
 
     return ask_json(
@@ -393,7 +607,12 @@ Create 8 to 12 chapters.
 # CHAPTER WRITING
 # ============================================================
 
-def write_chapter(client, book_plan, chapter):
+def write_chapter(
+    client,
+    book_plan,
+    chapter
+):
+
     title = chapter["title"]
 
     print(
@@ -402,11 +621,13 @@ def write_chapter(client, book_plan, chapter):
     )
 
     system = """
+
 You are a professional nonfiction ghostwriter.
 
 Write original, useful, practical content.
 
 Requirements:
+
 - Do not invent statistics.
 - Do not copy source text.
 - Do not imitate a living author's style.
@@ -414,20 +635,29 @@ Requirements:
 - Use clear English.
 - Use useful examples.
 - Make the chapter actionable.
+
 """
 
     user = f"""
+
 BOOK PLAN:
 
-{json.dumps(book_plan, ensure_ascii=False)}
+{json.dumps(
+    book_plan,
+    ensure_ascii=False
+)}
 
 CHAPTER:
 
-{json.dumps(chapter, ensure_ascii=False)}
+{json.dumps(
+    chapter,
+    ensure_ascii=False
+)}
 
 Write this chapter.
 
 Use:
+
 - clear headings
 - practical explanations
 - examples
@@ -435,29 +665,42 @@ Use:
 - concise summaries
 
 Do not include meta commentary.
+
 """
 
-    response = client.responses.create(
-        model=MODEL,
-        instructions=system,
-        input=user
+    return ask_text(
+        client,
+        system,
+        user
     )
-
-    return response.output_text.strip()
 
 
 # ============================================================
 # QUALITY CHECK
 # ============================================================
 
-def quality_check(client, book_plan, manuscript):
-    print("\n" + "=" * 70)
-    print("PHASE 7 - QUALITY CHECK")
-    print("=" * 70)
+def quality_check(
+    client,
+    book_plan,
+    manuscript
+):
+
+    print(
+        "\n" + "=" * 70
+    )
+
+    print(
+        "PHASE 7 - QUALITY CHECK"
+    )
+
+    print(
+        "=" * 70
+    )
 
     manuscript_sample = manuscript[:60000]
 
     system = """
+
 You are a strict editorial quality-control agent.
 
 Evaluate the manuscript.
@@ -465,12 +708,17 @@ Evaluate the manuscript.
 Do not say it is perfect.
 
 Return ONLY valid JSON.
+
 """
 
     user = f"""
+
 BOOK PLAN:
 
-{json.dumps(book_plan, ensure_ascii=False)}
+{json.dumps(
+    book_plan,
+    ensure_ascii=False
+)}
 
 MANUSCRIPT:
 
@@ -489,6 +737,7 @@ Evaluate:
   "recommended_fixes": [],
   "ready_for_human_review": true
 }}
+
 """
 
     return ask_json(
@@ -502,23 +751,39 @@ Evaluate:
 # MARKDOWN MANUSCRIPT
 # ============================================================
 
-def build_manuscript(book_plan, chapters):
+def build_manuscript(
+    book_plan,
+    chapters
+):
+
     lines = []
 
-    title = book_plan["title_options"][0]
+    title = book_plan[
+        "title_options"
+    ][0]
 
     subtitle = ""
 
-    if book_plan.get("subtitle_options"):
+    if book_plan.get(
+        "subtitle_options"
+    ):
+
         subtitle = book_plan[
             "subtitle_options"
         ][0]
 
-    lines.append(f"# {title}")
+    lines.append(
+        f"# {title}"
+    )
+
     lines.append("")
 
     if subtitle:
-        lines.append(f"## {subtitle}")
+
+        lines.append(
+            f"## {subtitle}"
+        )
+
         lines.append("")
 
     lines.append(
@@ -527,10 +792,15 @@ def build_manuscript(book_plan, chapters):
     )
 
     lines.append("")
-    lines.append("---")
+
+    lines.append(
+        "---"
+    )
+
     lines.append("")
 
     for chapter in chapters:
+
         lines.append(
             f"# Chapter "
             f"{chapter['chapter']}: "
@@ -538,12 +808,17 @@ def build_manuscript(book_plan, chapters):
         )
 
         lines.append("")
+
         lines.append(
             chapter["content"]
         )
 
         lines.append("")
-        lines.append("---")
+
+        lines.append(
+            "---"
+        )
+
         lines.append("")
 
     return "\n".join(lines)
@@ -556,11 +831,21 @@ def build_manuscript(book_plan, chapters):
 def main():
 
     print("\n")
-    print("=" * 70)
-    print("KDP AUTONOMOUS BOOK AGENT")
-    print("=" * 70)
 
-    tavily, openai = get_clients()
+    print(
+        "=" * 70
+    )
+
+    print(
+        "KDP AUTONOMOUS BOOK AGENT"
+    )
+
+    print(
+        "=" * 70
+    )
+
+    tavily, gemini = get_clients()
+
 
     # --------------------------------------------------------
     # 1. Discover niches
@@ -578,6 +863,7 @@ def main():
     niches = discovery[
         "candidate_niches"
     ][:NUMBER_OF_NICHES]
+
 
     # --------------------------------------------------------
     # 2. Research niches
@@ -601,7 +887,7 @@ def main():
         )
 
         analysis = analyze_niche(
-            openai,
+            gemini,
             niche,
             research
         )
@@ -610,17 +896,19 @@ def main():
             analysis
         )
 
+
     save_json(
         "02_niche_analyses.json",
         niche_analyses
     )
+
 
     # --------------------------------------------------------
     # 3. Select winner
     # --------------------------------------------------------
 
     winner = select_best_niche(
-        openai,
+        gemini,
         niche_analyses
     )
 
@@ -629,12 +917,13 @@ def main():
         winner
     )
 
+
     # --------------------------------------------------------
     # 4. Create book plan
     # --------------------------------------------------------
 
     book_plan = create_book_plan(
-        openai,
+        gemini,
         winner
     )
 
@@ -642,6 +931,7 @@ def main():
         "04_book_plan.json",
         book_plan
     )
+
 
     # --------------------------------------------------------
     # 5. Write book
@@ -654,7 +944,7 @@ def main():
     ]:
 
         content = write_chapter(
-            openai,
+            gemini,
             book_plan,
             chapter
         )
@@ -665,6 +955,7 @@ def main():
                 "content": content
             }
         )
+
 
     # --------------------------------------------------------
     # 6. Build manuscript
@@ -685,12 +976,13 @@ def main():
         chapters
     )
 
+
     # --------------------------------------------------------
     # 7. Quality check
     # --------------------------------------------------------
 
     qa = quality_check(
-        openai,
+        gemini,
         book_plan,
         manuscript
     )
@@ -700,34 +992,59 @@ def main():
         qa
     )
 
+
     # --------------------------------------------------------
     # 8. Final report
     # --------------------------------------------------------
 
     final_report = {
-        "agent": "KDP Autonomous Book Agent",
-        "selected_niche": winner,
-        "book_plan": book_plan,
-        "quality_check": qa,
-        "status": (
-            "READY_FOR_HUMAN_REVIEW"
-            if qa.get(
-                "ready_for_human_review",
-                False
+
+        "agent":
+            "KDP Autonomous Book Agent",
+
+        "selected_niche":
+            winner,
+
+        "book_plan":
+            book_plan,
+
+        "quality_check":
+            qa,
+
+        "status":
+            (
+                "READY_FOR_HUMAN_REVIEW"
+
+                if qa.get(
+                    "ready_for_human_review",
+                    False
+                )
+
+                else
+                "NEEDS_REVIEW"
             )
-            else "NEEDS_REVIEW"
-        )
     }
+
 
     save_json(
         "07_final_report.json",
         final_report
     )
 
+
     print("\n")
-    print("=" * 70)
-    print("AGENT FINISHED")
-    print("=" * 70)
+
+    print(
+        "=" * 70
+    )
+
+    print(
+        "AGENT FINISHED"
+    )
+
+    print(
+        "=" * 70
+    )
 
     print(
         f"\nSelected niche: "
