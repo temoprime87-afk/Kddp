@@ -1,31 +1,14 @@
-import json
 import os
-import re
-from datetime import datetime, timezone
-
-import requests
-
-
-TAVILY_URL = "https://api.tavily.com/search"
+import json
+from tavily import TavilyClient
 
 
 # ============================================================
-# KDP WEB RESEARCH ENGINE
+# KDP AUTONOMOUS RESEARCH AGENT v2
 # ============================================================
-
-
-def clean_text(value):
-    if value is None:
-        return ""
-
-    value = str(value)
-    value = re.sub(r"\s+", " ", value)
-
-    return value.strip()
-
 
 def get_api_key():
-    key = os.getenv("TAVILY_API_KEY", "").strip()
+    key = os.getenv("TAVILY_API_KEY")
 
     if not key:
         raise RuntimeError(
@@ -36,299 +19,180 @@ def get_api_key():
     return key
 
 
-def search_web(query, api_key, max_results=5):
-    """
-    Search the web using Tavily.
-    """
+def search(client, query, max_results=5):
+    print(f"\nSEARCH: {query}")
 
-    payload = {
-        "api_key": api_key,
-        "query": query,
-        "search_depth": "advanced",
-        "max_results": max_results,
-        "include_answer": True,
-        "include_raw_content": False,
-    }
-
-    response = requests.post(
-        TAVILY_URL,
-        json=payload,
-        timeout=60,
-    )
-
-    response.raise_for_status()
-
-    return response.json()
-
-
-def extract_results(search_response):
-    results = []
-
-    for item in search_response.get("results", []):
-        results.append(
-            {
-                "title": clean_text(item.get("title")),
-                "url": clean_text(item.get("url")),
-                "content": clean_text(item.get("content")),
-                "score": item.get("score"),
-            }
+    try:
+        response = client.search(
+            query=query,
+            search_depth="advanced",
+            max_results=max_results,
+            include_answer=True
         )
 
-    return results
+        results = response.get("results", [])
+
+        print(f"Found {len(results)} sources.")
+
+        return {
+            "query": query,
+            "answer": response.get("answer"),
+            "sources": [
+                {
+                    "title": item.get("title"),
+                    "url": item.get("url"),
+                    "content": item.get("content", "")[:3000]
+                }
+                for item in results
+            ]
+        }
+
+    except Exception as e:
+        print(f"Search error: {e}")
+
+        return {
+            "query": query,
+            "answer": None,
+            "sources": [],
+            "error": str(e)
+        }
 
 
-def research_niche(niche, api_key):
-    """
-    Perform multiple searches around one niche.
-    """
+def deep_research(client, niche):
+    print("\n" + "=" * 60)
+    print(f"DEEP RESEARCH: {niche}")
+    print("=" * 60)
 
     queries = [
         f"{niche} market demand trends",
-        f"{niche} problems customers want solved",
-        f"{niche} books Amazon Kindle paperback bestseller",
-        f"{niche} competitors books reviews",
-        f"{niche} underserved audience opportunities",
+        f"{niche} Amazon Kindle books best sellers",
+        f"{niche} Amazon paperback books reviews",
+        f"{niche} customer problems complaints",
+        f"{niche} customer needs underserved audience",
+        f"{niche} competing books weaknesses",
+        f"{niche} book keywords Amazon",
+        f"{niche} profitable book ideas",
+        f"{niche} low competition keywords",
+        f"{niche} book ideas 2026"
     ]
 
-    research = {
-        "niche": niche,
-        "queries": [],
-        "sources": [],
-    }
+    research = []
 
     for query in queries:
-
-        print("")
-        print(f"SEARCH: {query}")
-
-        try:
-            response = search_web(
-                query,
-                api_key,
-                max_results=5,
-            )
-
-            results = extract_results(response)
-
-            research["queries"].append(
-                {
-                    "query": query,
-                    "answer": clean_text(
-                        response.get("answer", "")
-                    ),
-                    "results": results,
-                }
-            )
-
-            for result in results:
-                research["sources"].append(result)
-
-            print(
-                f"Found {len(results)} sources."
-            )
-
-        except Exception as error:
-
-            print(
-                f"Search failed: {error}"
-            )
-
-            research["queries"].append(
-                {
-                    "query": query,
-                    "error": str(error),
-                    "results": [],
-                }
-            )
+        result = search(client, query)
+        research.append(result)
 
     return research
 
 
-def calculate_basic_score(research):
-    """
-    Preliminary score based on research coverage.
+def analyze_research(niche, research):
+    all_sources = []
 
-    This is NOT a sales guarantee.
-    """
+    for item in research:
+        for source in item.get("sources", []):
+            all_sources.append(source)
 
-    source_count = len(
-        research.get("sources", [])
+    unique_urls = set()
+
+    unique_sources = []
+
+    for source in all_sources:
+        url = source.get("url")
+
+        if url and url not in unique_urls:
+            unique_urls.add(url)
+            unique_sources.append(source)
+
+    # Simple evidence-based scoring.
+    # This is NOT a guarantee of sales.
+    source_count = len(unique_sources)
+
+    demand_score = min(100, 50 + source_count * 2)
+    competition_score = min(100, 50 + source_count)
+    opportunity_score = round(
+        (demand_score + (100 - competition_score)) / 2
     )
 
-    unique_domains = set()
+    if opportunity_score >= 70:
+        decision = "GO"
+    elif opportunity_score >= 50:
+        decision = "REVIEW"
+    else:
+        decision = "NO-GO"
 
-    for source in research.get("sources", []):
-
-        url = source.get("url", "")
-
-        match = re.search(
-            r"https?://([^/]+)",
-            url,
-        )
-
-        if match:
-            unique_domains.add(
-                match.group(1).lower()
-            )
-
-    source_score = min(
-        source_count * 5,
-        50,
-    )
-
-    diversity_score = min(
-        len(unique_domains) * 5,
-        30,
-    )
-
-    coverage_score = min(
-        len(research.get("queries", [])) * 4,
-        20,
-    )
-
-    score = (
-        source_score
-        + diversity_score
-        + coverage_score
-    )
-
-    return min(round(score, 2), 100)
+    return {
+        "niche": niche,
+        "decision": decision,
+        "scores": {
+            "research_depth": min(100, source_count * 4),
+            "demand_signal": demand_score,
+            "competition_signal": competition_score,
+            "opportunity_score": opportunity_score
+        },
+        "source_count": source_count,
+        "sources": unique_sources
+    }
 
 
-def save_json(filename, data):
+def save_report(report):
     with open(
-        filename,
+        "kdp_deep_research_report.json",
         "w",
-        encoding="utf-8",
+        encoding="utf-8"
     ) as file:
-
         json.dump(
-            data,
+            report,
             file,
             indent=2,
-            ensure_ascii=False,
+            ensure_ascii=False
         )
+
+    print("\nSaved: kdp_deep_research_report.json")
 
 
 def main():
+    print("=" * 60)
+    print("KDP AUTONOMOUS RESEARCH ENGINE v2")
+    print("=" * 60)
 
-    print("")
-    print("=" * 70)
-    print("KDP AUTONOMOUS WEB RESEARCH ENGINE")
-    print("=" * 70)
-    print("")
+    client = TavilyClient(api_key=get_api_key())
 
-    api_key = get_api_key()
+    # Niche selected by the previous research stage.
+    niche = "meal planning for busy families"
 
-    # Initial research targets.
-    # Later the agent will discover these automatically.
-    niches = [
-        "meal planning for busy families",
-        "home organization workbook",
-        "beginner hobby workbook",
-        "specialized puzzle books",
-        "guided self improvement journal",
-    ]
+    research = deep_research(
+        client,
+        niche
+    )
 
-    all_research = []
-
-    for number, niche in enumerate(
-        niches,
-        start=1,
-    ):
-
-        print("")
-        print("=" * 70)
-        print(
-            f"NICHE {number}/{len(niches)}: {niche}"
-        )
-        print("=" * 70)
-
-        research = research_niche(
-            niche,
-            api_key,
-        )
-
-        score = calculate_basic_score(
-            research
-        )
-
-        research["preliminary_research_score"] = score
-
-        all_research.append(research)
-
-        print("")
-        print(
-            f"Preliminary research score: "
-            f"{score}/100"
-        )
-
-    all_research.sort(
-        key=lambda item: item.get(
-            "preliminary_research_score",
-            0,
-        ),
-        reverse=True,
+    analysis = analyze_research(
+        niche,
+        research
     )
 
     report = {
-        "generated_at": datetime.now(
-            timezone.utc
-        ).isoformat(),
-
-        "engine": (
-            "KDP Autonomous Web Research Engine"
-        ),
-
-        "important_note": (
-            "Research scores are analytical signals, "
-            "not guarantees of sales."
-        ),
-
-        "niches_analyzed": len(
-            all_research
-        ),
-
-        "ranking": all_research,
+        "agent": "KDP Autonomous Research Agent v2",
+        "niche": niche,
+        "research_queries": len(research),
+        "analysis": analysis
     }
 
-    save_json(
-        "kdp_web_research.json",
-        report,
-    )
+    print("\n" + "=" * 60)
+    print("FINAL DEEP RESEARCH RESULT")
+    print("=" * 60)
 
-    print("")
-    print("=" * 70)
-    print("FINAL RESEARCH RESULT")
-    print("=" * 70)
-
-    if all_research:
-
-        winner = all_research[0]
-
-        print("")
-        print(
-            f"TOP RESEARCH OPPORTUNITY: "
-            f"{winner['niche']}"
-        )
-
-        print(
-            f"SCORE: "
-            f"{winner['preliminary_research_score']}/100"
-        )
-
-        print(
-            f"SOURCES: "
-            f"{len(winner.get('sources', []))}"
-        )
-
-    print("")
+    print(f"\nNICHE: {niche}")
+    print(f"DECISION: {analysis['decision']}")
     print(
-        "Saved: kdp_web_research.json"
+        f"OPPORTUNITY SCORE: "
+        f"{analysis['scores']['opportunity_score']}/100"
+    )
+    print(
+        f"UNIQUE SOURCES: "
+        f"{analysis['source_count']}"
     )
 
-    print("")
-    print("=" * 70)
+    save_report(report)
 
 
 if __name__ == "__main__":
