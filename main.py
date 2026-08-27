@@ -1,30 +1,29 @@
 import os
 import json
+import re
+import time
 from pathlib import Path
 
 from tavily import TavilyClient
 from google import genai
-from google.genai import types
 
 
 # ============================================================
 # KDP AUTONOMOUS BOOK AGENT
+# Gemini + Tavily
 # Research -> Analysis -> Planning -> Writing -> QA
 # ============================================================
 
 OUTPUT_DIR = Path("output")
 
 NUMBER_OF_NICHES = 5
-SEARCHES_PER_NICHE = 5
-DEEP_SEARCHES = 10
+SEARCHES_PER_NICHE = 10
 
 BOOK_LANGUAGE = "English"
 
 # Gemini model
-MODEL = os.getenv(
-    "GEMINI_MODEL",
-    "gemini-2.5-flash-lite"
-)
+# You can change this from GitHub Actions Variables later.
+MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
 
 # ============================================================
@@ -45,13 +44,8 @@ def get_required_env(name):
 
 def get_clients():
 
-    tavily_key = get_required_env(
-        "TAVILY_API_KEY"
-    )
-
-    gemini_key = get_required_env(
-        "GEMINI_API_KEY"
-    )
+    tavily_key = get_required_env("TAVILY_API_KEY")
+    gemini_key = get_required_env("GEMINI_API_KEY")
 
     tavily = TavilyClient(
         api_key=tavily_key
@@ -89,9 +83,7 @@ def save_json(filename, data):
             ensure_ascii=False
         )
 
-    print(
-        f"Saved: {path}"
-    )
+    print(f"Saved: {path}")
 
 
 def save_text(filename, text):
@@ -110,9 +102,7 @@ def save_text(filename, text):
 
         f.write(text)
 
-    print(
-        f"Saved: {path}"
-    )
+    print(f"Saved: {path}")
 
 
 # ============================================================
@@ -149,9 +139,11 @@ def web_search(
 
         return {
             "query": query,
+
             "answer": response.get(
                 "answer"
             ),
+
             "sources": [
 
                 {
@@ -193,17 +185,11 @@ def web_search(
 
 def discover_niches(client):
 
-    print(
-        "\n" + "=" * 70
-    )
-
+    print("\n" + "=" * 70)
     print(
         "PHASE 1 - NICHE DISCOVERY"
     )
-
-    print(
-        "=" * 70
-    )
+    print("=" * 70)
 
     queries = [
 
@@ -216,7 +202,6 @@ def discover_niches(client):
         "low competition workbook niches 2026",
 
         "problems people want solved with books"
-
     ]
 
     research = []
@@ -230,6 +215,8 @@ def discover_niches(client):
             )
         )
 
+    # These are starting candidates.
+    # Gemini will analyze them using actual research.
     candidates = [
 
         "meal planning for busy families",
@@ -241,15 +228,11 @@ def discover_niches(client):
         "specialized puzzle books",
 
         "guided self improvement journal"
-
     ]
 
     return {
-
         "queries": research,
-
         "candidate_niches": candidates
-
     }
 
 
@@ -262,17 +245,13 @@ def research_niche(
     niche
 ):
 
-    print(
-        "\n" + "=" * 70
-    )
+    print("\n" + "=" * 70)
 
     print(
         f"PHASE 2 - RESEARCH: {niche}"
     )
 
-    print(
-        "=" * 70
-    )
+    print("=" * 70)
 
     queries = [
 
@@ -295,7 +274,6 @@ def research_niche(
         f"{niche} underserved audience",
 
         f"{niche} Amazon keywords"
-
     ]
 
     results = []
@@ -313,6 +291,88 @@ def research_niche(
 
 
 # ============================================================
+# GEMINI TEXT CALL
+# ============================================================
+
+def gemini_text(
+    client,
+    system_prompt,
+    user_prompt,
+    max_output_tokens=6000,
+    temperature=0.4
+):
+
+    prompt = f"""
+SYSTEM INSTRUCTIONS:
+
+{system_prompt}
+
+USER TASK:
+
+{user_prompt}
+"""
+
+    max_attempts = 5
+
+    for attempt in range(
+        1,
+        max_attempts + 1
+    ):
+
+        try:
+
+            print(
+                f"Gemini request "
+                f"{attempt}/{max_attempts}"
+            )
+
+            response = client.models.generate_content(
+
+                model=MODEL,
+
+                contents=prompt,
+
+                config={
+                    "temperature": temperature,
+                    "max_output_tokens": max_output_tokens
+                }
+            )
+
+            text = response.text
+
+            if not text:
+
+                raise RuntimeError(
+                    "Gemini returned empty response."
+                )
+
+            return text.strip()
+
+        except Exception as e:
+
+            print(
+                f"Gemini error: {e}"
+            )
+
+            if attempt == max_attempts:
+
+                raise
+
+            # Wait longer after each failure.
+            wait_seconds = (
+                5 * attempt
+            )
+
+            print(
+                f"Waiting {wait_seconds}s..."
+            )
+
+            time.sleep(
+                wait_seconds
+            )
+
+
+# ============================================================
 # GEMINI JSON CALL
 # ============================================================
 
@@ -322,71 +382,76 @@ def ask_json(
     user_prompt
 ):
 
-    prompt = f"""
-SYSTEM INSTRUCTIONS:
+    text = gemini_text(
 
-{system_prompt}
+        client,
 
-USER REQUEST:
+        system_prompt,
 
-{user_prompt}
+        user_prompt,
 
-IMPORTANT:
+        max_output_tokens=7000,
 
-Return ONLY valid JSON.
+        temperature=0.2
+    )
 
-Do not use markdown.
-Do not use ```json.
-Do not add explanations before or after the JSON.
-"""
+    # Remove markdown fences if Gemini
+    # accidentally adds them.
 
-    response = client.models.generate_content(
+    text = re.sub(
+        r"^```json\s*",
+        "",
+        text,
+        flags=re.IGNORECASE
+    )
 
-        model=MODEL,
+    text = re.sub(
+        r"^```\s*",
+        "",
+        text,
+        flags=re.IGNORECASE
+    )
 
-        contents=prompt,
+    text = re.sub(
+        r"\s*```$",
+        "",
+        text
+    )
 
-        config=types.GenerateContentConfig(
+    text = text.strip()
 
-            response_mime_type="application/json"
+    try:
 
+        return json.loads(
+            text
         )
-    )
 
-    text = response.text.strip()
+    except json.JSONDecodeError:
 
-    return json.loads(text)
+        # Try to locate JSON object.
+        start = text.find("{")
+        end = text.rfind("}")
 
+        if start != -1 and end != -1:
 
-# ============================================================
-# GEMINI TEXT CALL
-# ============================================================
+            candidate = text[
+                start:end + 1
+            ]
 
-def ask_text(
-    client,
-    system_prompt,
-    user_prompt
-):
+            try:
 
-    prompt = f"""
-SYSTEM INSTRUCTIONS:
+                return json.loads(
+                    candidate
+                )
 
-{system_prompt}
+            except Exception:
 
-USER REQUEST:
+                pass
 
-{user_prompt}
-"""
-
-    response = client.models.generate_content(
-
-        model=MODEL,
-
-        contents=prompt
-
-    )
-
-    return response.text.strip()
+        raise RuntimeError(
+            "Gemini returned invalid JSON:\n"
+            + text[:5000]
+        )
 
 
 # ============================================================
@@ -399,78 +464,100 @@ def analyze_niche(
     research
 ):
 
-    print(
-        "\n" + "=" * 70
-    )
+    print("\n" + "=" * 70)
 
     print(
         f"PHASE 3 - AI ANALYSIS: {niche}"
     )
 
-    print(
-        "=" * 70
-    )
+    print("=" * 70)
 
     research_text = json.dumps(
         research,
         ensure_ascii=False
-    )[:50000]
+    )
+
+    # Keep prompt reasonably sized.
+    research_text = research_text[
+        :50000
+    ]
 
     system = """
 
-You are an expert KDP market research analyst.
+You are an expert Amazon KDP market
+research analyst.
 
-Analyze the supplied research carefully.
+Analyze the research evidence carefully.
 
 Never claim guaranteed sales.
 
-Return ONLY valid JSON.
+Do not invent statistics.
 
-Evaluate the opportunity using:
-
-- customer demand signals
-- competition
-- review complaints
-- underserved needs
-- differentiation opportunities
-- keyword intent
-- practical value
-- risk
+Do not pretend that search results prove
+sales unless the evidence actually supports it.
 
 Use scores from 0 to 100.
 
+Evaluate:
+
+- customer demand
+- competition
+- customer problems
+- customer complaints
+- underserved needs
+- differentiation
+- keyword intent
+- practical value
+- commercial risk
+
+Return ONLY valid JSON.
 """
 
     user = f"""
 
-Niche:
+NICHE:
 
 {niche}
 
-Research:
+
+RESEARCH:
 
 {research_text}
 
-Return this JSON structure:
+
+Return exactly this type of JSON:
 
 {{
   "niche": "...",
+
   "demand_score": 0,
+
   "competition_score": 0,
+
   "problem_score": 0,
+
   "differentiation_score": 0,
+
   "keyword_score": 0,
+
   "overall_score": 0,
+
   "decision": "GO",
+
   "target_reader": "...",
+
   "main_problems": [],
+
   "customer_needs": [],
+
   "competitor_weaknesses": [],
+
   "differentiation_strategy": [],
+
   "book_opportunities": [],
+
   "risks": []
 }}
-
 """
 
     return ask_json(
@@ -489,20 +576,18 @@ def select_best_niche(
     analyses
 ):
 
-    print(
-        "\n" + "=" * 70
-    )
+    print("\n" + "=" * 70)
 
     print(
         "PHASE 4 - SELECTING BEST NICHE"
     )
 
-    print(
-        "=" * 70
-    )
+    print("=" * 70)
 
     best = max(
+
         analyses,
+
         key=lambda x: x.get(
             "overall_score",
             0
@@ -531,17 +616,13 @@ def create_book_plan(
     niche_analysis
 ):
 
-    print(
-        "\n" + "=" * 70
-    )
+    print("\n" + "=" * 70)
 
     print(
         "PHASE 5 - BOOK PLAN"
     )
 
-    print(
-        "=" * 70
-    )
+    print("=" * 70)
 
     analysis_text = json.dumps(
         niche_analysis,
@@ -550,50 +631,63 @@ def create_book_plan(
 
     system = """
 
-You are a professional nonfiction book architect.
+You are a professional nonfiction
+book architect.
 
-Create a commercially sensible but honest KDP book plan.
+Create an original and commercially
+sensible KDP book plan.
 
 Do not copy existing books.
 
 Do not imitate a living author's style.
 
-Create original concepts.
+Do not invent statistics.
 
 Return ONLY valid JSON.
-
 """
 
     user = f"""
 
-Create a complete book plan from this research:
+Create a complete book plan from:
 
 {analysis_text}
+
 
 Return:
 
 {{
   "book_concept": "...",
+
   "target_reader": "...",
+
   "title_options": [],
+
   "subtitle_options": [],
+
   "unique_value_proposition": "...",
+
   "table_of_contents": [
+
     {{
       "chapter": 1,
       "title": "...",
       "purpose": "...",
       "key_points": []
     }}
+
   ],
+
   "reader_outcome": "...",
+
   "keywords": [],
+
   "categories_ideas": [],
+
   "content_rules": []
 }}
 
-Create 8 to 12 chapters.
 
+Create 8 to 12 chapters.
 """
 
     return ask_json(
@@ -613,7 +707,9 @@ def write_chapter(
     chapter
 ):
 
-    title = chapter["title"]
+    title = chapter[
+        "title"
+    ]
 
     print(
         f"\nWRITING CHAPTER "
@@ -622,9 +718,11 @@ def write_chapter(
 
     system = """
 
-You are a professional nonfiction ghostwriter.
+You are a professional nonfiction
+ghostwriter.
 
-Write original, useful, practical content.
+Write original, useful and practical
+content.
 
 Requirements:
 
@@ -635,7 +733,8 @@ Requirements:
 - Use clear English.
 - Use useful examples.
 - Make the chapter actionable.
-
+- Stay consistent with the book plan.
+- Do not mention that you are an AI.
 """
 
     user = f"""
@@ -647,12 +746,14 @@ BOOK PLAN:
     ensure_ascii=False
 )}
 
+
 CHAPTER:
 
 {json.dumps(
     chapter,
     ensure_ascii=False
 )}
+
 
 Write this chapter.
 
@@ -665,13 +766,19 @@ Use:
 - concise summaries
 
 Do not include meta commentary.
-
 """
 
-    return ask_text(
+    return gemini_text(
+
         client,
+
         system,
-        user
+
+        user,
+
+        max_output_tokens=10000,
+
+        temperature=0.6
     )
 
 
@@ -685,30 +792,31 @@ def quality_check(
     manuscript
 ):
 
-    print(
-        "\n" + "=" * 70
-    )
+    print("\n" + "=" * 70)
 
     print(
         "PHASE 7 - QUALITY CHECK"
     )
 
-    print(
-        "=" * 70
-    )
+    print("=" * 70)
 
-    manuscript_sample = manuscript[:60000]
+    manuscript_sample = manuscript[
+        :60000
+    ]
 
     system = """
 
-You are a strict editorial quality-control agent.
+You are a strict editorial
+quality-control agent.
 
-Evaluate the manuscript.
+Evaluate the manuscript honestly.
 
 Do not say it is perfect.
 
-Return ONLY valid JSON.
+Do not invent problems that are not
+present.
 
+Return ONLY valid JSON.
 """
 
     user = f"""
@@ -720,24 +828,33 @@ BOOK PLAN:
     ensure_ascii=False
 )}
 
+
 MANUSCRIPT:
 
 {manuscript_sample}
+
 
 Evaluate:
 
 {{
   "overall_quality": 0,
+
   "originality": 0,
+
   "usefulness": 0,
+
   "structure": 0,
+
   "clarity": 0,
+
   "filler_risk": 0,
+
   "issues": [],
+
   "recommended_fixes": [],
+
   "ready_for_human_review": true
 }}
-
 """
 
     return ask_json(
@@ -793,18 +910,18 @@ def build_manuscript(
 
     lines.append("")
 
-    lines.append(
-        "---"
-    )
+    lines.append("---")
 
     lines.append("")
 
     for chapter in chapters:
 
         lines.append(
+
             f"# Chapter "
             f"{chapter['chapter']}: "
             f"{chapter['title']}"
+
         )
 
         lines.append("")
@@ -815,13 +932,13 @@ def build_manuscript(
 
         lines.append("")
 
-        lines.append(
-            "---"
-        )
+        lines.append("---")
 
         lines.append("")
 
-    return "\n".join(lines)
+    return "\n".join(
+        lines
+    )
 
 
 # ============================================================
@@ -832,23 +949,26 @@ def main():
 
     print("\n")
 
-    print(
-        "=" * 70
-    )
+    print("=" * 70)
 
     print(
         "KDP AUTONOMOUS BOOK AGENT"
     )
 
     print(
-        "=" * 70
+        "Gemini + Tavily"
     )
+
+    print("=" * 70)
+
+    # --------------------------------------------------------
+    # CONNECT
+    # --------------------------------------------------------
 
     tavily, gemini = get_clients()
 
-
     # --------------------------------------------------------
-    # 1. Discover niches
+    # 1. DISCOVER NICHES
     # --------------------------------------------------------
 
     discovery = discover_niches(
@@ -864,14 +984,16 @@ def main():
         "candidate_niches"
     ][:NUMBER_OF_NICHES]
 
-
     # --------------------------------------------------------
-    # 2. Research niches
+    # 2. RESEARCH + ANALYZE NICHES
     # --------------------------------------------------------
 
     niche_analyses = []
 
-    for niche in niches:
+    for index, niche in enumerate(
+        niches,
+        start=1
+    ):
 
         research = research_niche(
             tavily,
@@ -879,7 +1001,9 @@ def main():
         )
 
         save_json(
-            f"research_{len(niche_analyses)+1}.json",
+
+            f"research_{index}.json",
+
             {
                 "niche": niche,
                 "research": research
@@ -887,8 +1011,11 @@ def main():
         )
 
         analysis = analyze_niche(
+
             gemini,
+
             niche,
+
             research
         )
 
@@ -896,15 +1023,16 @@ def main():
             analysis
         )
 
+        # Small pause between Gemini calls.
+        time.sleep(2)
 
     save_json(
         "02_niche_analyses.json",
         niche_analyses
     )
 
-
     # --------------------------------------------------------
-    # 3. Select winner
+    # 3. SELECT WINNER
     # --------------------------------------------------------
 
     winner = select_best_niche(
@@ -917,9 +1045,8 @@ def main():
         winner
     )
 
-
     # --------------------------------------------------------
-    # 4. Create book plan
+    # 4. CREATE BOOK PLAN
     # --------------------------------------------------------
 
     book_plan = create_book_plan(
@@ -932,9 +1059,8 @@ def main():
         book_plan
     )
 
-
     # --------------------------------------------------------
-    # 5. Write book
+    # 5. WRITE BOOK
     # --------------------------------------------------------
 
     chapters = []
@@ -944,25 +1070,33 @@ def main():
     ]:
 
         content = write_chapter(
+
             gemini,
+
             book_plan,
+
             chapter
         )
 
         chapters.append(
+
             {
                 **chapter,
                 "content": content
             }
         )
 
+        # Small pause between chapters.
+        time.sleep(2)
 
     # --------------------------------------------------------
-    # 6. Build manuscript
+    # 6. BUILD MANUSCRIPT
     # --------------------------------------------------------
 
     manuscript = build_manuscript(
+
         book_plan,
+
         chapters
     )
 
@@ -976,14 +1110,16 @@ def main():
         chapters
     )
 
-
     # --------------------------------------------------------
-    # 7. Quality check
+    # 7. QUALITY CHECK
     # --------------------------------------------------------
 
     qa = quality_check(
+
         gemini,
+
         book_plan,
+
         manuscript
     )
 
@@ -992,15 +1128,17 @@ def main():
         qa
     )
 
-
     # --------------------------------------------------------
-    # 8. Final report
+    # 8. FINAL REPORT
     # --------------------------------------------------------
 
     final_report = {
 
         "agent":
             "KDP Autonomous Book Agent",
+
+        "ai_model":
+            MODEL,
 
         "selected_niche":
             winner,
@@ -1020,31 +1158,28 @@ def main():
                     False
                 )
 
-                else
-                "NEEDS_REVIEW"
+                else "NEEDS_REVIEW"
             )
     }
-
 
     save_json(
         "07_final_report.json",
         final_report
     )
 
+    # --------------------------------------------------------
+    # FINISH
+    # --------------------------------------------------------
 
     print("\n")
 
-    print(
-        "=" * 70
-    )
+    print("=" * 70)
 
     print(
         "AGENT FINISHED"
     )
 
-    print(
-        "=" * 70
-    )
+    print("=" * 70)
 
     print(
         f"\nSelected niche: "
@@ -1062,10 +1197,15 @@ def main():
     )
 
     print(
-        "\nAll results are inside the "
-        "output/ folder."
+        "\nAll results are inside "
+        "the output/ folder."
     )
 
 
+# ============================================================
+# RUN
+# ============================================================
+
 if __name__ == "__main__":
+
     main()
